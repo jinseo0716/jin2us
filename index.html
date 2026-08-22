@@ -23,50 +23,63 @@
 <div id="root"></div>
 
 <script>
-// window.storage(클로드 아티팩트 전용 저장소)가 없는 환경(예: 파일을 그대로 저장해서 열었을 때)에서도
-// 입력한 내용이 사라지지 않도록 localStorage 기반 폴백을 만들어줍니다.
+// window.storage(클로드 아티팩트 전용 저장소)가 없는 환경(예: 이 파일을 실제 웹사이트로 올렸을 때)에서는
+// Supabase 데이터베이스를 통해 저장해서, 어떤 기기/브라우저에서 열어도 같은 데이터가 보이게 합니다.
 if (typeof window.storage === 'undefined') {
   (function () {
-    var PREFIX = 'household-budget:';
-    function keyFor(key, shared) {
-      return PREFIX + (shared ? 'shared:' : 'user:') + key;
+    var SUPABASE_URL = 'https://bctuwpnusbbbmvwfyfix.supabase.co';
+    var SUPABASE_KEY = 'sb_publishable__n8oRkJGFRKJkr-HgM4LqQ_RR8n76ml';
+    var TABLE_URL = SUPABASE_URL + '/rest/v1/kv_store';
+    var headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json'
+    };
+    function fullKey(key, shared) {
+      return (shared ? 'shared:' : 'user:') + key;
     }
     window.storage = {
       get: function (key, shared) {
-        return Promise.resolve().then(function () {
-          var raw = window.localStorage.getItem(keyFor(key, !!shared));
-          if (raw === null) {
-            throw new Error('Key not found: ' + key);
-          }
-          return { key: key, value: raw, shared: !!shared };
-        });
+        var fk = fullKey(key, !!shared);
+        return fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk) + '&select=value', { headers: headers })
+          .then(function (res) { return res.json(); })
+          .then(function (rows) {
+            if (!rows || rows.length === 0) {
+              throw new Error('Key not found: ' + key);
+            }
+            return { key: key, value: rows[0].value, shared: !!shared };
+          });
       },
       set: function (key, value, shared) {
-        return Promise.resolve().then(function () {
-          window.localStorage.setItem(keyFor(key, !!shared), value);
+        var fk = fullKey(key, !!shared);
+        return fetch(TABLE_URL + '?on_conflict=key', {
+          method: 'POST',
+          headers: Object.assign({}, headers, { 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+          body: JSON.stringify([{ key: fk, value: value, shared: !!shared }])
+        }).then(function () {
           return { key: key, value: value, shared: !!shared };
         });
       },
       delete: function (key, shared) {
-        return Promise.resolve().then(function () {
-          var existed = window.localStorage.getItem(keyFor(key, !!shared)) !== null;
-          window.localStorage.removeItem(keyFor(key, !!shared));
-          return { key: key, deleted: existed, shared: !!shared };
-        });
+        var fk = fullKey(key, !!shared);
+        return fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk), {
+          method: 'DELETE',
+          headers: Object.assign({}, headers, { 'Prefer': 'return=representation' })
+        })
+          .then(function (res) { return res.json(); })
+          .then(function (rows) {
+            return { key: key, deleted: !!(rows && rows.length), shared: !!shared };
+          });
       },
       list: function (prefix, shared) {
-        return Promise.resolve().then(function () {
-          var base = PREFIX + (shared ? 'shared:' : 'user:');
-          var full = base + (prefix || '');
-          var keys = [];
-          for (var i = 0; i < window.localStorage.length; i++) {
-            var lk = window.localStorage.key(i);
-            if (lk && lk.indexOf(full) === 0) {
-              keys.push(lk.slice(base.length));
-            }
-          }
-          return { keys: keys, prefix: prefix, shared: !!shared };
-        });
+        var base = shared ? 'shared:' : 'user:';
+        var full = base + (prefix || '');
+        return fetch(TABLE_URL + '?key=like.' + encodeURIComponent(full) + '*&select=key', { headers: headers })
+          .then(function (res) { return res.json(); })
+          .then(function (rows) {
+            var keys = (rows || []).map(function (r) { return r.key.slice(base.length); });
+            return { keys: keys, prefix: prefix, shared: !!shared };
+          });
       }
     };
   })();
