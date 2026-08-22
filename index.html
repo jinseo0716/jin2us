@@ -42,7 +42,9 @@ if (typeof window.storage === 'undefined') {
     }
     function withErrorBanner(promise, context) {
       return promise.catch(function (err) {
-        showSyncError(context, (err && err.message) ? err.message : String(err));
+        if (!(err && err.__expected404)) {
+          showSyncError(context, (err && err.message) ? err.message : String(err));
+        }
         throw err;
       });
     }
@@ -51,8 +53,10 @@ if (typeof window.storage === 'undefined') {
         var bodyText = '';
         try { bodyText = await res.text(); } catch (e) {}
         var detail = res.status + ' ' + res.statusText + (bodyText ? (' - ' + bodyText.slice(0, 200)) : '');
-        showSyncError(context, detail);
-        throw new Error('/api/kv ' + context + ' failed: ' + detail);
+        var isExpected404 = (context === 'get' && res.status === 404);
+        var err = new Error('/api/kv ' + context + ' failed: ' + detail);
+        err.__expected404 = isExpected404;
+        throw err;
       }
       return res;
     }
