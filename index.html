@@ -24,21 +24,10 @@
 
 <script>
 // window.storage(클로드 아티팩트 전용 저장소)가 없는 환경(예: 이 파일을 실제 웹사이트로 올렸을 때)에서는
-// Supabase 데이터베이스를 통해 저장해서, 어떤 기기/브라우저에서 열어도 같은 데이터가 보이게 합니다.
+// 이 사이트 자신의 /api/kv 를 통해 저장합니다. (Supabase와의 실제 통신은 서버가 대신 처리해서,
+// 브라우저가 외부 도메인으로 직접 요청을 보낼 필요가 없어 회사망 등에서 막힐 걱정이 없습니다.)
 if (typeof window.storage === 'undefined') {
   (function () {
-    var SUPABASE_URL = 'https://bctuwpnusbbbmvwfyfix.supabase.co';
-    var SUPABASE_KEY = 'sb_publishable__n8oRkJGFRKJkr-HgM4LqQ_RR8n76ml';
-    var TABLE_URL = SUPABASE_URL + '/rest/v1/kv_store';
-    // 새 방식(publishable) 키는 Authorization 헤더에 넣으면 안 되고 apikey 헤더에만 넣어야 합니다.
-    // (Authorization: Bearer <publishable key>로 보내면 서버가 JWT가 아니라며 요청을 거부합니다.)
-    var headers = {
-      'apikey': SUPABASE_KEY,
-      'Content-Type': 'application/json'
-    };
-    function fullKey(key, shared) {
-      return (shared ? 'shared:' : 'user:') + key;
-    }
     function showSyncError(context, detail) {
       try {
         var el = document.getElementById('__sync_error_banner__');
@@ -51,81 +40,60 @@ if (typeof window.storage === 'undefined') {
         el.textContent = '동기화 저장소 연결 오류(' + context + '): ' + detail + ' — 데이터가 서버에 저장되지 않고 있어요.';
       } catch (e) { /* noop */ }
     }
-    async function checkRes(res, context) {
-      if (!res.ok) {
-        var bodyText = '';
-        try { bodyText = await res.text(); } catch (e) {}
-        var detail = res.status + ' ' + res.statusText + (bodyText ? (' - ' + bodyText.slice(0, 200)) : '');
-        showSyncError(context, detail);
-        throw new Error('Supabase ' + context + ' failed: ' + detail);
-      }
-      return res;
-    }
     function withErrorBanner(promise, context) {
       return promise.catch(function (err) {
         showSyncError(context, (err && err.message) ? err.message : String(err));
         throw err;
       });
     }
+    async function checkRes(res, context) {
+      if (!res.ok) {
+        var bodyText = '';
+        try { bodyText = await res.text(); } catch (e) {}
+        var detail = res.status + ' ' + res.statusText + (bodyText ? (' - ' + bodyText.slice(0, 200)) : '');
+        showSyncError(context, detail);
+        throw new Error('/api/kv ' + context + ' failed: ' + detail);
+      }
+      return res;
+    }
     window.storage = {
       get: function (key, shared) {
-        var fk = fullKey(key, !!shared);
         return withErrorBanner(
-          fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk) + '&select=value&_=' + Date.now(), { headers: headers, cache: 'no-store' })
+          fetch('/api/kv?key=' + encodeURIComponent(key) + '&shared=' + (!!shared) + '&_=' + Date.now(), { cache: 'no-store' })
             .then(function (res) { return checkRes(res, 'get'); })
-            .then(function (res) { return res.json(); })
-            .then(function (rows) {
-              if (!rows || rows.length === 0) {
-                throw new Error('Key not found: ' + key);
-              }
-              return { key: key, value: rows[0].value, shared: !!shared };
-            }),
+            .then(function (res) { return res.json(); }),
           'get'
         );
       },
       set: function (key, value, shared) {
-        var fk = fullKey(key, !!shared);
         return withErrorBanner(
-          fetch(TABLE_URL + '?on_conflict=key', {
+          fetch('/api/kv?key=' + encodeURIComponent(key) + '&shared=' + (!!shared), {
             method: 'POST',
-            headers: Object.assign({}, headers, { 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
-            body: JSON.stringify([{ key: fk, value: value, shared: !!shared }]),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: value }),
             cache: 'no-store'
           })
             .then(function (res) { return checkRes(res, 'set'); })
-            .then(function () {
-              return { key: key, value: value, shared: !!shared };
-            }),
+            .then(function (res) { return res.json(); }),
           'set'
         );
       },
       delete: function (key, shared) {
-        var fk = fullKey(key, !!shared);
         return withErrorBanner(
-          fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk), {
+          fetch('/api/kv?key=' + encodeURIComponent(key) + '&shared=' + (!!shared), {
             method: 'DELETE',
-            headers: Object.assign({}, headers, { 'Prefer': 'return=representation' }),
             cache: 'no-store'
           })
             .then(function (res) { return checkRes(res, 'delete'); })
-            .then(function (res) { return res.json(); })
-            .then(function (rows) {
-              return { key: key, deleted: !!(rows && rows.length), shared: !!shared };
-            }),
+            .then(function (res) { return res.json(); }),
           'delete'
         );
       },
       list: function (prefix, shared) {
-        var base = shared ? 'shared:' : 'user:';
-        var full = base + (prefix || '');
         return withErrorBanner(
-          fetch(TABLE_URL + '?key=like.' + encodeURIComponent(full) + '*&select=key&_=' + Date.now(), { headers: headers, cache: 'no-store' })
+          fetch('/api/kv?list=1&prefix=' + encodeURIComponent(prefix || '') + '&shared=' + (!!shared) + '&_=' + Date.now(), { cache: 'no-store' })
             .then(function (res) { return checkRes(res, 'list'); })
-            .then(function (res) { return res.json(); })
-            .then(function (rows) {
-              var keys = (rows || []).map(function (r) { return r.key.slice(base.length); });
-              return { keys: keys, prefix: prefix, shared: !!shared };
-            }),
+            .then(function (res) { return res.json(); }),
           'list'
         );
       }
