@@ -30,56 +30,102 @@ if (typeof window.storage === 'undefined') {
     var SUPABASE_URL = 'https://bctuwpnusbbbmvwfyfix.supabase.co';
     var SUPABASE_KEY = 'sb_publishable__n8oRkJGFRKJkr-HgM4LqQ_RR8n76ml';
     var TABLE_URL = SUPABASE_URL + '/rest/v1/kv_store';
+    // 새 방식(publishable) 키는 Authorization 헤더에 넣으면 안 되고 apikey 헤더에만 넣어야 합니다.
+    // (Authorization: Bearer <publishable key>로 보내면 서버가 JWT가 아니라며 요청을 거부합니다.)
     var headers = {
       'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
       'Content-Type': 'application/json'
     };
     function fullKey(key, shared) {
       return (shared ? 'shared:' : 'user:') + key;
     }
+    function showSyncError(context, detail) {
+      try {
+        var el = document.getElementById('__sync_error_banner__');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = '__sync_error_banner__';
+          el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#C92A2A;color:#fff;padding:8px 12px;font:12px/1.4 sans-serif;text-align:center;';
+          document.body.appendChild(el);
+        }
+        el.textContent = '동기화 저장소 연결 오류(' + context + '): ' + detail + ' — 데이터가 서버에 저장되지 않고 있어요.';
+      } catch (e) { /* noop */ }
+    }
+    async function checkRes(res, context) {
+      if (!res.ok) {
+        var bodyText = '';
+        try { bodyText = await res.text(); } catch (e) {}
+        var detail = res.status + ' ' + res.statusText + (bodyText ? (' - ' + bodyText.slice(0, 200)) : '');
+        showSyncError(context, detail);
+        throw new Error('Supabase ' + context + ' failed: ' + detail);
+      }
+      return res;
+    }
+    function withErrorBanner(promise, context) {
+      return promise.catch(function (err) {
+        showSyncError(context, (err && err.message) ? err.message : String(err));
+        throw err;
+      });
+    }
     window.storage = {
       get: function (key, shared) {
         var fk = fullKey(key, !!shared);
-        return fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk) + '&select=value', { headers: headers })
-          .then(function (res) { return res.json(); })
-          .then(function (rows) {
-            if (!rows || rows.length === 0) {
-              throw new Error('Key not found: ' + key);
-            }
-            return { key: key, value: rows[0].value, shared: !!shared };
-          });
+        return withErrorBanner(
+          fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk) + '&select=value', { headers: headers })
+            .then(function (res) { return checkRes(res, 'get'); })
+            .then(function (res) { return res.json(); })
+            .then(function (rows) {
+              if (!rows || rows.length === 0) {
+                throw new Error('Key not found: ' + key);
+              }
+              return { key: key, value: rows[0].value, shared: !!shared };
+            }),
+          'get'
+        );
       },
       set: function (key, value, shared) {
         var fk = fullKey(key, !!shared);
-        return fetch(TABLE_URL + '?on_conflict=key', {
-          method: 'POST',
-          headers: Object.assign({}, headers, { 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
-          body: JSON.stringify([{ key: fk, value: value, shared: !!shared }])
-        }).then(function () {
-          return { key: key, value: value, shared: !!shared };
-        });
+        return withErrorBanner(
+          fetch(TABLE_URL + '?on_conflict=key', {
+            method: 'POST',
+            headers: Object.assign({}, headers, { 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+            body: JSON.stringify([{ key: fk, value: value, shared: !!shared }])
+          })
+            .then(function (res) { return checkRes(res, 'set'); })
+            .then(function () {
+              return { key: key, value: value, shared: !!shared };
+            }),
+          'set'
+        );
       },
       delete: function (key, shared) {
         var fk = fullKey(key, !!shared);
-        return fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk), {
-          method: 'DELETE',
-          headers: Object.assign({}, headers, { 'Prefer': 'return=representation' })
-        })
-          .then(function (res) { return res.json(); })
-          .then(function (rows) {
-            return { key: key, deleted: !!(rows && rows.length), shared: !!shared };
-          });
+        return withErrorBanner(
+          fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk), {
+            method: 'DELETE',
+            headers: Object.assign({}, headers, { 'Prefer': 'return=representation' })
+          })
+            .then(function (res) { return checkRes(res, 'delete'); })
+            .then(function (res) { return res.json(); })
+            .then(function (rows) {
+              return { key: key, deleted: !!(rows && rows.length), shared: !!shared };
+            }),
+          'delete'
+        );
       },
       list: function (prefix, shared) {
         var base = shared ? 'shared:' : 'user:';
         var full = base + (prefix || '');
-        return fetch(TABLE_URL + '?key=like.' + encodeURIComponent(full) + '*&select=key', { headers: headers })
-          .then(function (res) { return res.json(); })
-          .then(function (rows) {
-            var keys = (rows || []).map(function (r) { return r.key.slice(base.length); });
-            return { keys: keys, prefix: prefix, shared: !!shared };
-          });
+        return withErrorBanner(
+          fetch(TABLE_URL + '?key=like.' + encodeURIComponent(full) + '*&select=key', { headers: headers })
+            .then(function (res) { return checkRes(res, 'list'); })
+            .then(function (res) { return res.json(); })
+            .then(function (rows) {
+              var keys = (rows || []).map(function (r) { return r.key.slice(base.length); });
+              return { keys: keys, prefix: prefix, shared: !!shared };
+            }),
+          'list'
+        );
       }
     };
   })();
