@@ -71,7 +71,7 @@ if (typeof window.storage === 'undefined') {
       get: function (key, shared) {
         var fk = fullKey(key, !!shared);
         return withErrorBanner(
-          fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk) + '&select=value', { headers: headers })
+          fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk) + '&select=value&_=' + Date.now(), { headers: headers, cache: 'no-store' })
             .then(function (res) { return checkRes(res, 'get'); })
             .then(function (res) { return res.json(); })
             .then(function (rows) {
@@ -89,7 +89,8 @@ if (typeof window.storage === 'undefined') {
           fetch(TABLE_URL + '?on_conflict=key', {
             method: 'POST',
             headers: Object.assign({}, headers, { 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
-            body: JSON.stringify([{ key: fk, value: value, shared: !!shared }])
+            body: JSON.stringify([{ key: fk, value: value, shared: !!shared }]),
+            cache: 'no-store'
           })
             .then(function (res) { return checkRes(res, 'set'); })
             .then(function () {
@@ -103,7 +104,8 @@ if (typeof window.storage === 'undefined') {
         return withErrorBanner(
           fetch(TABLE_URL + '?key=eq.' + encodeURIComponent(fk), {
             method: 'DELETE',
-            headers: Object.assign({}, headers, { 'Prefer': 'return=representation' })
+            headers: Object.assign({}, headers, { 'Prefer': 'return=representation' }),
+            cache: 'no-store'
           })
             .then(function (res) { return checkRes(res, 'delete'); })
             .then(function (res) { return res.json(); })
@@ -117,7 +119,7 @@ if (typeof window.storage === 'undefined') {
         var base = shared ? 'shared:' : 'user:';
         var full = base + (prefix || '');
         return withErrorBanner(
-          fetch(TABLE_URL + '?key=like.' + encodeURIComponent(full) + '*&select=key', { headers: headers })
+          fetch(TABLE_URL + '?key=like.' + encodeURIComponent(full) + '*&select=key&_=' + Date.now(), { headers: headers, cache: 'no-store' })
             .then(function (res) { return checkRes(res, 'list'); })
             .then(function (res) { return res.json(); })
             .then(function (rows) {
