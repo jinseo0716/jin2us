@@ -413,38 +413,6 @@ var e,a,n="function"==typeof Symbol?Symbol:{},t=n.iterator||"@@iterator",r=n.toS
 
 </script>
 
-<script>
-(function () {
-  function fullKey(key, shared) {
-    return 'hb:' + (shared ? 'shared' : 'personal') + ':' + key;
-  }
-  window.storage = {
-    async get(key, shared) {
-      const raw = localStorage.getItem(fullKey(key, shared));
-      if (raw === null) throw new Error('not found');
-      return { key, value: raw, shared: !!shared };
-    },
-    async set(key, value, shared) {
-      localStorage.setItem(fullKey(key, shared), value);
-      return { key, value, shared: !!shared };
-    },
-    async delete(key, shared) {
-      localStorage.removeItem(fullKey(key, shared));
-      return { key, deleted: true, shared: !!shared };
-    },
-    async list(prefix, shared) {
-      const p = fullKey(prefix || '', shared);
-      const keys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith(p)) keys.push(k.slice(('hb:' + (shared ? 'shared' : 'personal') + ':').length));
-      }
-      return { keys, prefix, shared: !!shared };
-    },
-  };
-})();
-
-</script>
 
 <script>
 window.SHEET_SEED_ENTRIES = [
